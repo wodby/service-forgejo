@@ -1,0 +1,311 @@
+name: forgejo
+icon: forgejo
+type: service
+title: Forgejo
+guidance: GUIDANCE.md
+# Repositories, LFS objects and packages live on one ReadWriteOnce volume.
+scalable: false
+
+options:
+- version: '17'
+  tag: '17.0.1-rootless'
+  default: true
+  eol: '2027-01-28T00:00:00+00:00'
+# Long-term support release.
+- version: '15'
+  tag: '15.0.11-rootless'
+  eol: '2027-07-15T00:00:00+00:00'
+
+labels:
+- forgejo
+- git
+- scm
+
+deployment:
+  strategy: rolling
+  shutdownGracePeriod: 60s
+
+endpoints:
+- name: forgejo
+  ports:
+  - name: http
+    number: 3000
+    protocol: http
+    main: true
+    routeDefaults:
+      https_redirect: 'true'
+      request_timeout: 0s
+      backend_request_timeout: 0s
+  # Git over SSH works once this port is published. Publishing redeploys the
+  # service, so clone addresses show the public port at once.
+  - name: ssh
+    number: 2222
+    protocol: tcp
+    routeToPublicPort: true
+
+tokens:
+- name: secret_key
+  generate:
+    regex: '[0-9A-Za-z]{64}'
+- name: internal_token
+  generate:
+    regex: '[0-9A-Za-z]{64}'
+# Forgejo reads both JWT secrets as 32 bytes in unpadded base64url.
+- name: oauth2_jwt_secret
+  generate:
+    regex: '[0-9A-Za-z_-]{43}'
+- name: lfs_jwt_secret
+  generate:
+    regex: '[0-9A-Za-z_-]{43}'
+
+settings:
+# The administrator account the first deployment creates. The web installer is
+# never shown, so no one else can claim the site.
+- name: admin-username
+  title: Admin username
+  description: Username of the Forgejo administrator created on the first deployment. Forgejo reserves some names, such as admin.
+  default: forgejo_admin
+  var: FORGEJO_ADMIN_USERNAME
+- name: admin-password
+  title: Admin password
+  description: Password of the Forgejo administrator created on the first deployment, at least 8 characters. Change it in Forgejo afterwards; this setting is not applied again.
+  required: true
+  secret: true
+  var: FORGEJO_ADMIN_PASSWORD
+- name: admin-email
+  title: Admin email
+  description: Email address of the Forgejo administrator. When empty, it is the username at the site's domain.
+  var: FORGEJO_ADMIN_EMAIL
+
+links:
+- name: postgres
+  title: PostgreSQL
+  required: true
+  selectors:
+  - type: db
+    labels:
+    - postgres
+  env:
+  - name: FORGEJO__database__DB_TYPE
+    value: postgres
+  - name: FORGEJO__database__HOST
+    value: '{{link.database.host}}:{{link.database.port}}'
+  - name: FORGEJO__database__NAME
+    value: '{{link.database.db.name}}'
+  - name: FORGEJO__database__USER
+    value: '{{link.database.user.name}}'
+  - name: FORGEJO__database__PASSWD
+    value: '{{link.database.user.password}}'
+    secret: true
+  # TLS when the server offers it (managed databases), plain connections to the
+  # bundled PostgreSQL service, which has no TLS.
+  - name: FORGEJO__database__SSL_MODE
+    value: prefer
+- name: sendmail
+  title: SMTP server
+  selectors:
+  - type: service
+    labels:
+    - smtpd
+  env:
+  - name: FORGEJO__mailer__ENABLED
+    value: 'true'
+  - name: FORGEJO__mailer__PROTOCOL
+    value: smtp
+  - name: FORGEJO__mailer__SMTP_ADDR
+    value: '{{link.host}}'
+  - name: FORGEJO__mailer__SMTP_PORT
+    value: '{{link.port}}'
+
+env:
+# FORGEJO__<section>__<KEY> variables are written to app.ini on every start; an
+# empty section name is the file's root.
+- name: FORGEJO____APP_NAME
+  value: '{{app.title}}'
+- name: FORGEJO__server__DOMAIN
+  value: '{{service.primaryHost}}'
+- name: FORGEJO__server__ROOT_URL
+  value: '{{service.primaryURL}}'
+- name: FORGEJO__server__SSH_DOMAIN
+  value: '{{service.primaryHost}}'
+- name: FORGEJO__server__SSH_LISTEN_PORT
+  value: '2222'
+- name: FORGEJO_SSH_PUBLIC_PORT
+  value: '{{service.endpoints.forgejo.ports.ssh.publicPort}}'
+- name: FORGEJO__server__LFS_START_SERVER
+  value: 'true'
+- name: FORGEJO__server__LFS_JWT_SECRET
+  value: '{{tokens.lfs_jwt_secret}}'
+  secret: true
+- name: FORGEJO__security__INSTALL_LOCK
+  value: 'true'
+- name: FORGEJO__security__SECRET_KEY
+  value: '{{tokens.secret_key}}'
+  secret: true
+- name: FORGEJO__security__INTERNAL_TOKEN
+  value: '{{tokens.internal_token}}'
+  secret: true
+# Client addresses come from X-Forwarded-For set by the cluster gateway.
+- name: FORGEJO__security__REVERSE_PROXY_TRUSTED_PROXIES
+  value: 127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,fc00::/7
+- name: FORGEJO__oauth2__JWT_SECRET
+  value: '{{tokens.oauth2_jwt_secret}}'
+  secret: true
+# Accounts are created by an administrator until registration is enabled.
+- name: FORGEJO__service__DISABLE_REGISTRATION
+  value: 'true'
+
+volumes:
+- name: data
+  title: Forgejo data
+  size: 20
+  helm:
+    labels: persistence.labels
+    values:
+    - name: persistence.enabled
+      value: true
+    - name: persistence.size
+      value: '{{volumes.data.size}}Gi'
+    - name: persistence.storageClass
+      value: '{{volumes.data.storageClassName}}'
+
+helm:
+  name: wodby
+  source: oci://registry-1.docker.io/wodby/stateful
+  chart: oci://registry-1.docker.io/wodby/stateful
+  version: 0.2.0
+  valueMappings:
+    replicas: replicaCount
+    serviceAccountName: serviceAccount.name
+    serviceAccountCreate: serviceAccount.create
+  values:
+  - name: containerName
+    value: forgejo
+  - name: containerPorts
+    value:
+    - name: http
+      containerPort: 3000
+      protocol: TCP
+    - name: ssh
+      containerPort: 2222
+      protocol: TCP
+  # The SSH port follows the published port number, as routed by the gateway.
+  - name: service.ports
+    value:
+    - name: http
+      port: 3000
+    - name: ssh
+      port: '{{service.endpoints.forgejo.ports.ssh.effectivePort}}'
+  - name: podSecurityContext
+    value:
+      fsGroup: 1000
+      fsGroupChangePolicy: OnRootMismatch
+  - name: securityContext
+    value:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+      runAsGroup: 1000
+      runAsNonRoot: true
+      runAsUser: 1000
+  - name: persistence.mountPath
+    value: /var/lib/gitea
+  - name: terminationGracePeriodSeconds
+    value: 60
+  # The image's entrypoint writes the FORGEJO__* variables to app.ini, then runs
+  # this script.
+  - name: args
+    value:
+    - /bin/sh
+    - -c
+    - |
+      set -eu
+      # SSH clone addresses work only through a published port. Until the port
+      # is published, SSH stays off so Forgejo shows no unreachable addresses.
+      if [ -n "${FORGEJO_SSH_PUBLIC_PORT:-}" ]; then
+        export FORGEJO__server__DISABLE_SSH=false FORGEJO__server__SSH_PORT="$FORGEJO_SSH_PUBLIC_PORT"
+      else
+        export FORGEJO__server__DISABLE_SSH=true
+      fi
+      # Mail needs a sender address; it follows the site's domain unless set.
+      export FORGEJO__mailer__FROM="${FORGEJO__mailer__FROM:-noreply@${FORGEJO__server__DOMAIN:-localhost}}"
+      # GITEA_APP_INI is the image's own setting: app.ini on the data volume.
+      environment-to-ini --config "$GITEA_APP_INI"
+
+      forgejo migrate
+      # The first administrator comes from the service settings. Later changes
+      # to those settings don't touch existing users.
+      if [ "$(forgejo admin user list --admin | tail -n +2 | wc -l)" -eq 0 ]; then
+        if [ -z "${FORGEJO_ADMIN_PASSWORD:-}" ]; then
+          echo "Forgejo has no administrator. Set the Admin password setting of this service and deploy again." >&2
+          exit 1
+        fi
+        # Forgejo accepts any length from its CLI; its own sign-up minimum is 8.
+        if [ "${#FORGEJO_ADMIN_PASSWORD}" -lt 8 ]; then
+          echo "The Admin password setting of this service must have at least 8 characters." >&2
+          exit 1
+        fi
+        forgejo admin user create --admin \
+          --username "${FORGEJO_ADMIN_USERNAME:-forgejo_admin}" \
+          --email "${FORGEJO_ADMIN_EMAIL:-${FORGEJO_ADMIN_USERNAME:-forgejo_admin}@${FORGEJO__server__DOMAIN:-localhost}}" \
+          --password "$FORGEJO_ADMIN_PASSWORD" \
+          --must-change-password=false
+      fi
+      exec forgejo web
+  # Database migrations after an upgrade run before Forgejo answers.
+  - name: startupProbe
+    value:
+      httpGet:
+        path: /api/healthz
+        port: http
+      failureThreshold: 90
+      periodSeconds: 10
+      timeoutSeconds: 5
+  - name: readinessProbe
+    value:
+      httpGet:
+        path: /api/healthz
+        port: http
+      failureThreshold: 6
+      periodSeconds: 10
+      timeoutSeconds: 5
+  - name: livenessProbe
+    value:
+      httpGet:
+        path: /api/healthz
+        port: http
+      failureThreshold: 6
+      periodSeconds: 10
+      timeoutSeconds: 5
+
+workloads:
+- name: main
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: '{{helm.release}}'
+  kind: statefulset
+  primary: true
+  helm:
+    labels: commonLabels
+    annotations: commonAnnotations
+    volumes: extraVolumes
+  containers:
+  - name: forgejo
+    image: data.forgejo.org/forgejo/forgejo
+    resources:
+      request:
+        cpu: 200
+        memory: 512
+      limit:
+        cpu: 2000
+        memory: 2048
+    helm:
+      resources: resources
+      env: envVars
+      mounts: extraVolumeMounts
+      image:
+        repository: image.repository
+        tag: image.tag
+        registry: image.registry
+        pullPolicy: image.pullPolicy
