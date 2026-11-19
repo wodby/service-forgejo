@@ -8,12 +8,12 @@ scalable: false
 
 options:
 - version: '17'
-  tag: '17.0.1-rootless'
+  tag: '17.0.2-rootless'
   default: true
   eol: '2027-01-28T00:00:00+00:00'
 # Long-term support release.
 - version: '15'
-  tag: '15.0.11-rootless'
+  tag: '15.0.12-rootless'
   eol: '2027-07-15T00:00:00+00:00'
 
 labels:
@@ -63,18 +63,22 @@ settings:
 # never shown, so no one else can claim the site.
 - name: admin-username
   title: Admin username
-  description: Username of the Forgejo administrator created on the first deployment. Forgejo reserves some names, such as admin.
+  description: Username of the Forgejo administrator created on the first 
+    deployment. Forgejo reserves some names, such as admin.
   default: forgejo_admin
   var: FORGEJO_ADMIN_USERNAME
 - name: admin-password
   title: Admin password
-  description: Password of the Forgejo administrator created on the first deployment, at least 8 characters. Change it in Forgejo afterwards; this setting is not applied again.
+  description: Password of the Forgejo administrator created on the first 
+    deployment, at least 8 characters. Change it in Forgejo afterwards; this 
+    setting is not applied again.
   required: true
   secret: true
   var: FORGEJO_ADMIN_PASSWORD
 - name: admin-email
   title: Admin email
-  description: Email address of the Forgejo administrator. When empty, it is the username at the site's domain.
+  description: Email address of the Forgejo administrator. When empty, it is the
+    username at the site's domain.
   var: FORGEJO_ADMIN_EMAIL
 
 links:
@@ -147,7 +151,8 @@ env:
   secret: true
 # Client addresses come from X-Forwarded-For set by the cluster gateway.
 - name: FORGEJO__security__REVERSE_PROXY_TRUSTED_PROXIES
-  value: 127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,fc00::/7
+  value: 
+    127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,fc00::/7
 - name: FORGEJO__oauth2__JWT_SECRET
   value: '{{tokens.oauth2_jwt_secret}}'
   secret: true
